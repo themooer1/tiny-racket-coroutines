@@ -1,4 +1,4 @@
 # assign06
-Assignment 6
+Assignment 6 + Final Project
 
-See: http://www.cs.umd.edu/class/fall2019/cmsc430/Assignments.html
+See: http://www.cs.umd.edu/class/fall2020/cmsc430/Assignments.html

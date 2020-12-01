@@ -1,6 +1,8 @@
 #lang racket
 (provide (all-defined-out))
 
+(require "ast.rkt")
+
 ;; type Value =
 ;; | Integer
 ;; | Boolean
@@ -16,51 +18,49 @@
 ;; Prog -> Answer
 (define (interp p)
   (match p
-    [(list 'begin ds ... e)
+    [(prog ds e)
      (interp-env e '() ds)]
     [e (interp-env e '() '())]))
 
 ;; Expr REnv (Listof Defn) -> Answer
 (define (interp-env e r ds)
   (match e
-    [(? value? v) v]
-    [''() '()]
-    [(list (? prim? p) es ...)
+    [(? value? v) (get-val v)]
+    [(var-e x)
+     (lookup r x)]
+    [(nil-e) '()]
+    [(prim-e (? prim? p) es)
      (let ((as (interp-env* es r ds)))
-       (interp-prim p as))]
-    [`(if ,e0 ,e1 ,e2)
+       (interp-prim p as r ds))]    
+    [(if-e e0 e1 e2)
      (match (interp-env e0 r ds)
        ['err 'err]
        [v
         (if v
             (interp-env e1 r ds)
             (interp-env e2 r ds))])]
-    [(? symbol? x)
-     (lookup r x)]
-    [`(let ,(list `(,xs ,es) ...) ,e)
-     (match (interp-env* es r ds)
+    [(let-e bs body)
+     (match (interp-env* (get-defs bs) r ds)
        ['err 'err]
        [vs
-        (interp-env e (append (zip xs vs) r) ds)])]
-    [(list 'cond cs ... `(else ,en))
-     (interp-cond-env cs en r ds)]
-    [`(apply ,f ,e)
-     (let ((vs (interp-env e r ds)))
-       (if (list? vs)
-           (apply-fun f vs ds)
-           'err))]
-    [`(,f . ,es)    (apply-fun f (interp-env* es r ds) ds)]
+        (interp-env body (append (zip (get-vars bs) vs) r) ds)])]
+    [(cond-e cs el)
+     (interp-cond-env cs el r ds)]
+    [(apply-e f e)   (let ((vs (interp-env e r ds)))
+                             (if (list? vs)
+                                 (apply-fun f vs ds)
+                                 'err))]
+    [(app-e f es)    (apply-fun f (interp-env* es r ds) ds)]
     [_ 'err]))
-
 
 ;; Variable (Listof Value) (Listof Defn) -> Answer
 (define (apply-fun f vs ds)
   (match (defns-lookup ds f)
-    [`(define (,f ,xs ...) ,e)
+    [(fundef f `(,xs ...) e)
      (if (= (length xs) (length vs))
          (interp-env e (zip xs vs) ds)
          'err)]
-    [`(define (,f ,xs ... . ,r) ,e)
+    [(fundef f `(,xs ... . ,r) e)
      (if (<= (length xs) (length vs))
          (interp-env e (zip/remainder xs vs r) ds)
          'err)]))
@@ -68,7 +68,7 @@
 
 ;; (Listof Defn) Symbol -> Defn
 (define (defns-lookup ds f)
-  (findf (match-lambda [`(define (,g . ,_) ,_) (eq? f g)])
+  (findf (match-lambda [(fundef g _ _) (eq? f g)])
          ds))
 
 ;; (Listof Expr) REnv (Listof Defn) -> (Listof Value) | 'err
@@ -84,7 +84,7 @@
 (define (interp-cond-env cs en r ds)
   (match cs
     ['() (interp-env en r ds)]
-    [(cons `(,eq ,ea) cs)
+    [(cons (clause eq ea) cs)
      (match (interp-env eq r ds)
        ['err 'err]
        [v
@@ -101,13 +101,13 @@
 
 ;; Any -> Boolean
 (define (value? x)
-  (or (integer? x)
-      (boolean? x)
-      (char? x)
-      (string? x)))
+  (or (int-e? x)
+      (bool-e? x)
+      (char-e? x)
+      (string-e? x)))
 
 ;; Prim (Listof Answer) -> Answer
-(define (interp-prim p as)
+(define (interp-prim p as r ds)
   (match (cons p as)
     [(list p (? value?) ... 'err _ ...) 'err]
     [(list '- (? integer? i0)) (- i0)]

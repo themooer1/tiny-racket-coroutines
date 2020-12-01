@@ -1,6 +1,17 @@
 #lang racket
 (provide (all-defined-out))
 
+(require "ast.rkt")
+
+;; This assignment should be completed individually.
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; I pledge on my honor that I have not given or received any
+;; unauthorized assistance on this assignment.
+;;
+;; Name: TODO
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 ;; An immediate is anything ending in #b0000
 ;; All other tags in mask #b111 are pointers
 
@@ -27,10 +38,6 @@
 ;; type CEnv = (Listof (Maybe Variable))
 ;; type Imm = Integer | Boolean | Char | ''()
 
-;; type Prog =
-;; | Expr
-;; | `(begin ,@(Listof `(define (,Variable ,@Formals) ,Expr))
-;;           ,Expr)
 
 ;; For the first parts for the assignment, Formals is a synonym for (Listof Variable)
 ;; type Formals = (Listof Variable)
@@ -44,12 +51,11 @@
 ;; Prog -> Asm
 (define (compile p)
   (match p
-    [(list 'begin `(define (,fs . ,xss) ,es) ... e0)
-     (let ((ds (compile-defines fs xss es))
-           (c0 (compile-entry e0)))
+    [(prog ds e)
+     (let ((ds (compile-defines ds))
+           (c0 (compile-entry e)))
        `(,@c0
-         ,@ds))]
-    [e (compile-entry e)]))
+         ,@ds))]))
 
 ;; Expr -> Asm
 ;; Compile e as the entry point
@@ -66,12 +72,27 @@
     (pop rbp)
     (jmp error)))
 
+;; (Listof Variable) (Listof (Listof Variable)) (Listof Expr) -> Asm
+(define (compile-defines defs)
+  (append-map compile-define defs))
+
 ;; Expr CEnv -> Asm
 (define (compile-e e c)
   (match e
-    [(? imm? i)               (compile-imm i)]
-    [(? symbol? x)            (compile-var x c)]
-    [(? string? s)            (compile-string s)]
+    [(? imm? i)              (compile-imm i)]
+    [(var-e v)               (compile-var v c)]
+    [(string-e s)            (compile-string s)]
+    [(cond-e (cons (clause p b) cs) f)
+                             (compile-e (if-e p b (cond-e cs f)) c)]
+    [(cond-e '() f)          (compile-e f c)]
+    [(prim-e (? prim? p) es) (compile-prim p es c)]
+    [(if-e p t f)            (compile-if p t f c)]
+    [(let-e bs body)         (compile-let bs body c)]
+    [(apply-e f e)           (compile-apply f e c)]
+    [(app-e f es)            (compile-call f es c)]))
+
+(define (compile-prim p es c)
+  (match (cons p es)
     [`(box ,e0)               (compile-box e0 c)]
     [`(unbox ,e0)             (compile-unbox e0 c)]
     [`(cons ,e0 ,e1)          (compile-cons e0 e1 c)]
@@ -80,7 +101,6 @@
     [`(add1 ,e0)              (compile-add1 e0 c)]
     [`(sub1 ,e0)              (compile-sub1 e0 c)]
     [`(zero? ,e0)             (compile-zero? e0 c)]
-    [`(if ,e0 ,e1 ,e2)        (compile-if e0 e1 e2 c)]
     [`(+ ,e0 ,e1)             (compile-+ e0 e1 c)]
     [`(- ,e0 ,e1)             (compile-binary-- e0 e1 c)]
     [`(char=? ,e0 ,e1)        (compile-char=? e0 e1 c)]
@@ -91,16 +111,11 @@
     [`(string-length ,e0)     (compile-string-length e0 c)]
     [`(string-ref ,e0 ,e1)    (compile-string-ref e0 e1 c)]
     [`(make-string ,e0 ,e1)   (compile-make-string e0 e1 c)]
-    [`(let ,bs ,e1)           (compile-let bs e1 c)]
     [`(,(? type-pred? p) ,e0) (compile-type-pred p e0 c)]
     [`(char->integer ,e0)     (compile-char->integer e0 c)]
     [`(integer->char ,e0)     (compile-integer->char e0 c)]
     [`(abs ,e0)               (compile-abs e0 c)]
-    [`(- ,e0)                 (compile-unary-- e0 c)]
-    [`(cond [else ,ean])      (compile-e ean c)]
-    [`(cond [,e0 ,e1] . ,r)   (compile-e `(if,e0 ,e1 (cond ,@r)) c)]
-    [`(apply ,f ,e)           (compile-apply f e c)]
-    [`(,f . ,es)              (compile-call f es c)]))
+    [`(- ,e0)                 (compile-unary-- e0 c)]))
 
 ;; Variable Expr CEnv -> Asm
 (define (compile-apply f e c)
@@ -132,31 +147,30 @@
          (mov (offset rsp ,(- (add1 (length c)))) rax)
          ,@cs))]))
 
-;; Variable Formals Expr -> Asm
-(define (compile-define f xs e0)
-  ;; TODO: update to do arity checking
-  (match xs
-    [(list xs ...)  
-     (let ((c0 (compile-e e0 (reverse xs))))
-       `(,(symbol->label f)
-         ,@c0
-         ret))]
-    [(list* xs ... r)
-     ;; TODO: implement variable-arity functions
-     '()]))
+;; FunDef -> Asm
+(define (compile-define def)
+  (match def
+    [(fundef name args body)
+      (match args
+        [(list xs ...)
+         (let ((c0 (compile-e body (reverse xs))))
+           `(,(symbol->label name)
+             ,@c0
+             ret))]
+        [(list* xs ... r)
+        ;; TODO: update to do arity checking
+        '()])
+             ]))
 
 
 
-;; (Listof Variable) (Listof Formals) (Listof Expr) -> Asm
-(define (compile-defines fs xss es)
-  (append-map compile-define fs xss es))
 
 ;; Any -> Boolean
 (define (imm? x)
-  (or (integer? x)
-      (boolean? x)
-      (char? x)
-      (equal? ''() x)))
+  (or (int-e? x)
+      (bool-e? x)
+      (char-e? x)
+      (nil-e? x)))
 
 ;; Any -> Boolean
 (define (type-pred? x)
@@ -175,10 +189,12 @@
 ;; Imm -> Integer
 (define (imm->bits i)
   (match i
-    [(? integer? i) (arithmetic-shift i imm-shift)]
-    [(? char? c)    (+ (arithmetic-shift (char->integer c) imm-shift) imm-type-char)]
-    [(? boolean? b) (if b imm-val-true imm-val-false)]
-    [''()           imm-type-empty]))
+    [(? integer? i)  (arithmetic-shift i imm-shift)]
+    [(? char? c) (+ (arithmetic-shift (char->integer c) imm-shift) imm-type-char)] 
+    [(int-e i)  (arithmetic-shift i imm-shift)]
+    [(char-e c) (+ (arithmetic-shift (char->integer c) imm-shift) imm-type-char)]
+    [(bool-e b) (if b imm-val-true imm-val-false)]
+    [nil-e      imm-type-empty]))
 
 ;; Expr Expr CEnv -> Asm
 (define (compile-char=? e0 e1 c)
@@ -400,8 +416,8 @@
 
 ;; (Listof (List Variable Expr)) Expr CEnv -> Asm
 (define (compile-let bs e1 c)
-  (let ((c0 (compile-let-rhs (map second bs) c))
-        (c1 (compile-e e1 (append (reverse (map first bs)) c))))
+  (let ((c0 (compile-let-rhs (get-defs bs) c))
+        (c1 (compile-e e1 (append (reverse (get-vars bs)) c))))
     `(,@c0
       ,@c1)))
 
