@@ -42,14 +42,22 @@
 ;; It's not very different from generating code for user-defined functions,
 ;; because lambdas _are_ user defined functions, they just don't have a name
 ;;
+;
+; (let ((y 42))
+;  ((lambda (x) (+ x y)) 17))
+;
+; xs   : '(x)
+; free : '(x y)
+;
 ;; Defn -> Asm
 (define (compile-λ-definition l)
   (match l
     [(Lam '() xs e) (error "Lambdas must be labelled before code gen (contact your compiler writer)")]
     [(Lam f xs e)
      (let* ((free (remq* xs (fvs e)))
-            ; leave space for RIP
-            (env (parity (cons #f (cons (length free) (reverse (append xs free)))))))
+            ; leave space for RIP - arity - free-len
+;            (env (parity (cons #f (cons #f (reverse (append xs free)))))))
+            (env (parity (cons #f (cons #f (cons #f (reverse (append xs free)))))))            
            (seq (Label (symbol->label f))
              ; we need the #args on the frame, not the length of the entire
              ; env (which may have padding)
@@ -93,19 +101,22 @@
     (Lea rax (symbol->label f))
     (Mov (Offset rbx 0) rax)
 
+    ; Save arity of function
+    (Mov (Offset rbx 8) (imm->bits (length xs)))
+
     ; Save the environment
     (%% "Begin saving the env")
     (Mov r8 (length ys))
-    (Mov (Offset rbx 8) r8)
+    (Mov (Offset rbx 16) r8)
     (Mov r9 rbx)
-    (Add r9 16)
+    (Add r9 24)
     (copy-env-to-heap ys c 0)
     (%% "end saving the env")
 
     ; Return a pointer to the closure
     (Mov rax rbx)
     (Or rax type-proc)
-    (Add rbx (* 8 (+ 2 (length ys))))))
+    (Add rbx (* 8 (+ 3 (length ys))))))
 
 ;; (Listof Variable) CEnv Natural -> Asm
 ;; Pointer to beginning of environment in r9
@@ -209,12 +220,7 @@
           (seq (assert-cons rax)
                (Xor rax type-cons)
                (Mov rax (Offset rax 0)))]
-         ['empty? (eq-imm val-empty)]
-         ['procedure-arity
-          ;; TODO
-          (seq)
-          ]
-         )))
+         ['empty? (eq-imm val-empty)])))
 
 ;; Op2 Expr Expr CEnv -> Asm
 (define (compile-prim2 p e1 e2 c)
@@ -247,7 +253,8 @@
                (Mov (Offset rbx 8) rax)
                (Mov rax rbx)
                (Or rax type-cons)
-               (Add rbx 16))])))
+               (Add rbx 16))]
+         )))
 
 
 
