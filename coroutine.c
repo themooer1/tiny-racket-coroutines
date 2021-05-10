@@ -15,9 +15,8 @@
 #define CR_DEBUG 1  // Levels 0, 1, 2
 #endif
 
-// Current CoRoutine
+// Current Coroutine
 #define CCR (current)
-// #define NUM_CRS (sizeof(coroutines)/sizeof(coroutines[0]))
 
 #define COROUTINE_MAX_STACK_SIZE (1024 * PAGE_SIZE)
 #define COROUTINE_MIN_STACK_SIZE (1 * PAGE_SIZE)
@@ -38,6 +37,39 @@ extern int quit(int64_t result);
 
 static struct cr_stack cr_alloc_stack();
 static void cr_free_stack(struct coroutine *c);
+
+
+
+/**
+ * Debugging utilities for printing lambdas
+ */
+
+struct __attribute__((__packed__)) lambda {
+    void *entrypoint;
+    int64_t arity;
+    int64_t num_captured;
+    int64_t captured_vars[];
+};
+
+static void print_lambda(int64_t lambda) {
+    ASSERT_PROC(lambda);
+    // assert((lambda ^ proc_type_tag) & 0x7 == 0);
+    struct lambda *l;
+    
+    l = (struct lambda *) (lambda ^ proc_type_tag);
+    assert(l != NULL);
+
+    printf("Lambda:\n\tentrypoint: %p\n\tarity: %lu\n\tnum_captured: %lu\n",
+        l->entrypoint,
+        l->arity,
+        l->num_captured);
+    
+    for (int i = 0; i < l->num_captured; ++i) {
+        putchar('\t');
+        print_result(l->captured_vars[i]);
+        putchar('\n');
+    }
+}
 
 static struct coroutine *cr_create_entry_coroutine() {
     struct coroutine *entry_coroutine = cr_create(0L, NULL);
@@ -261,7 +293,7 @@ void cr_schedule(void) {
  * 
  * This function stays on calling CR's stack
  */
-void __attribute__((__cdecl__)) cr_gather(int64_t num_lambdas, ...) {
+void cr_gather(int64_t num_lambdas, ...) {
     puts("cr_gather");
     printf("Starting %lu coroutines.\n", num_lambdas);
     if (num_lambdas > 0) {
@@ -282,6 +314,11 @@ void __attribute__((__cdecl__)) cr_gather(int64_t num_lambdas, ...) {
             int64_t lambda = va_arg(lambdas, int64_t);
             struct coroutine *cr = cr_create(lambda, CCR);
             cr_make_schedulable(cr);
+
+            if (CR_DEBUG) {
+                printf("Created coroutine for lambda, %p\n", cr);
+                print_lambda(lambda);
+            }
         }
     }
 

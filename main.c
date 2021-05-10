@@ -74,7 +74,7 @@ void print_result(int64_t result) {
     printf("#&");
     print_result (*((int64_t *)(result ^ box_type_tag)));
   } else if (proc_type_tag == (ptr_type_mask & result)) {
-    printf("<procedure>");
+    printf("<procedure @ %lu>", result ^ proc_type_tag);
     // struct coroutine *cr = cr_create(result, NULL);
     // puts("CrCr");
     // int64_t r2 = cr_entry(result, cr->stack.rsp);

@@ -534,30 +534,6 @@
     [_ (Push val)]
     ))
 
-
-; pass as many of the first maxarg - minarg values on the stack as will fit into the registers as 
-; register arguments numbered [minarg, maxarg] to a SystemV x64 function
-
-(define (sysv-stack-args-to-regs minarg maxarg)
-  (cond
-    [(< maxarg minarg) (seq)]
-    [(>= maxarg minarg) (seq
-        (sysv-stack-to-reg maxarg)
-        (sysv-stack-args-to-regs minarg (- maxarg 1)))]))
-
-(define (sysv-stack-to-reg n)
-  (match n
-    [0 (Pop 'rdi)]
-    [1 (Pop 'rsi)]
-    [2 (Pop 'rdx)]
-    [3 (Pop 'rcx)]
-    [4 (Pop 'r8 )]
-    [5 (Pop 'r9 )]
-    [_ (seq)]
-    ; [_ (raise (string-append "arg " (number->string n) " is not passed via register!"))]
-    ))
-
-
 ;; Compiles lambdas and gets ready to pass them to the C function,
 ;; cr_gather, to be turned into coroutines.
 ;; The lambdas are passed as variadic args so they can't all be
@@ -567,13 +543,10 @@
    ['() (seq)]
    [(cons l ls) 
       (seq (compile-e l c)
-        (%% (string-append "Saving arg " (number->string n) " to cr_gather."))
-        ; (sysv-push-arg n rax)
-        ; ^^^^^^ You can't do this because calculating the next argument will 
-        ; clobber values that you try to pass by register as arguments to the variadic
-        ; c function cr_gather
-        (Push rax)
-        (compile-gather-ext ls (cons #f c) (+ 1 n)))]))
+        (%% (string-append "Passing arg " (number->string n) " to cr_gather."))
+        (sysv-push-arg n rax)
+        (compile-gather-ext ls c (+ 1 n)))]))
+
 
 (define (compile-gather ls c)
  (let* ((cnt (max 0 (- (length ls) 5))) ;; First 6 args are passed in regs per SysV CConv, and the first arg, rsi, is reserved for the number of other args
@@ -590,8 +563,7 @@
 
        (compile-gather-ext ls c+ 1) ;; n = 1 because our first argument will be number of lambdas
        (%% "Passing arg 0 (num_lambdas) to cr_gather")
-       (sysv-push-arg 0 (length ls)) ;;  pass arg 0: num of lambdas
-       (sysv-stack-args-to-regs 1 (length ls))
+       (sysv-push-arg 0 (length ls)) ;;  pass first arg: num of lambdas
        (Call 'cr_gather)
        (%% "Pop stack args (if any) + padding (if any)")
        (%% (string-append "cnt was " (number->string cnt)))

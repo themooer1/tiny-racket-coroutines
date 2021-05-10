@@ -89,7 +89,7 @@ extern void cr_entry(int64_t lambda, void *stack);
 extern void cr_resume(void *saved_rsp, void *saved_rip);
 
 // Called from compiled program
-void __attribute__((__cdecl__)) cr_gather(int64_t num_lambdas, ...);
+void cr_gather(int64_t num_lambdas, ...);
 void cr_quit(int64_t result);
 void cr_schedule(void);
 void cr_yield(void *saved_rsp);
