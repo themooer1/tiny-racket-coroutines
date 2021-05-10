@@ -31,6 +31,7 @@
 ;;           | (Begin Expr Expr)
 ;;           | (Let Id Expr Expr)
 ;;           | LetRec (Binding list) Expr <--- New for Loot (See the lecture notes!)
+;;           | Gather (Lambda list) Expr <--- New 
 ;;           | Lam Name [Variable] Expr   <--- New for Loot
 ;;           | (Var Id)
 ;;           | (App Expr (Listof Expr))   <--- Changed from Knock
@@ -56,6 +57,7 @@
 (struct Begin  (e1 e2)      #:prefab)
 (struct Let    (x e1 e2)    #:prefab)
 (struct LetRec (bs e1)      #:prefab)
+(struct Gather (ls)         #:prefab)
 (struct Lam    (n xs e)     #:prefab)
 (struct Var    (x)          #:prefab)
 (struct App    (f es)       #:prefab)
@@ -97,6 +99,7 @@
       [(If e1 e2 e3)   (append (fvs e1) (fvs e2) (fvs e3))]
       [(Begin e1 e2)   (append (fvs e1) (fvs e2))]
       [(Let x e1 e2)   (append (fvs e1) (remq* (list x) (fvs e2)))]
+      [(Gather ls)     (append-map fvs ls)]
       [(LetRec bs e1)  (let ((bound (map car bs))
                              (def-fvs (append-map fvs-bind bs)))
                             (remq* bound (append def-fvs (fvs e1))))]
@@ -160,6 +163,7 @@
     [(If e1 e2 e3)   (If (desugar e1) (desugar e2) (desugar e3))]
     [(Begin e1 e2)   (Begin (desugar e1) (desugar e2))]
     [(Let x e1 e2)   (Let x (desugar e1) (desugar e2))]
+    [(Gather ls)     (Gather (map desugar ls))]
     [(LetRec bs e1)  (LetRec (map (lambda (xs) (map desugar xs)) bs) (desugar e1))]
     [(Lam n xs e)    (Lam (gensym 'lam) xs (desugar e))]
     [(App f es)      (App (desugar f) (map desugar es))]
@@ -188,6 +192,7 @@
     [(If e1 e2 e3)   (If (label-λ e1) (label-λ e2) (label-λ e3))]
     [(Begin e1 e2)   (Begin (label-λ e1) (label-λ e2))]
     [(Let x e1 e2)   (Let x (label-λ e1) (label-λ e2))]
+    [(Gather ls)     (Gather (map label-λ ls))]
     [(LetRec bs e1)  (LetRec (map (lambda (xs) (map label-λ xs)) bs) (label-λ e1))]
     [(Lam '() xs e)  (Lam (gensym 'lam) xs (label-λ e))]
     [(Lam n xs e)    (Lam (gensym n) xs (label-λ e))]
@@ -219,6 +224,7 @@
     [(If e1 e2 e3)   (append (λs e1) (λs e2) (λs e3))]
     [(Begin e1 e2)   (append (λs e1) (λs e2))]
     [(Let x e1 e2)   (append (λs e1) (λs e2))]
+    [(Gather ls)     (append-map λs ls)]
     [(LetRec bs e1)  (append (append-map lambda-defs bs) (λs e1))]
     [(Lam n xs e1)   (cons e (λs e1))]
     [(App f es)      (append (λs f) (append-map λs es))]

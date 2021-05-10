@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 (provide (all-defined-out))
 (require "ast.rkt" "types.rkt" a86/ast)
 
@@ -12,6 +12,29 @@
 (define rsp 'rsp) ; stack
 (define rdi 'rdi) ; arg
 
+(define (save-regs)
+  (seq 
+    (Push rax)
+    (Push rbx)
+    (Push rcx)
+    (Push rdx)
+    (Push r8)
+    (Push r9)
+    ; (Push rsp)
+    (Push rdi)))
+
+(define (restore-regs)
+  (seq
+    (Pop rdi)
+    ; (Pop rsp)
+    (Pop r9)
+    (Pop r8)
+    (Pop rdx)
+    (Pop rcx)
+    (Pop rbx)
+    (Pop rax)))
+  
+
 ;; type CEnv = [Listof Variable]
 
 ;; Expr -> Asm
@@ -22,11 +45,24 @@
            (Extern 'read_byte)
            (Extern 'write_byte)
            (Extern 'raise_error)
-           (Label 'entry)
-           (Mov rbx rdi)
+           (Extern 'quit)
+           (Global 'cr_entry)
+           (Global 'cr_resume)
+           (Extern 'cr_gather) ;; Provided by coroutine.c
+           (Extern 'cr_yield) ;; Provided by coroutine.c
+           (Extern 'cr_quit) ;; Provided by coroutine.c
+           (Label 'entry)  ;; First label is auto-global
+           (Mov rbx rdi) ;; Install heap
+           (Mov rsp 'rsi) ;; Install stack
+          ;  (cr-yield) ;; Test yielding
            (compile-e e '(#f))
            (Mov rdx rbx)
-           (Ret)
+           (Mov rdi rax) ; Passing result to quit instead of returning
+          ;  (And rsp -16)
+           (Call 'cr_quit)
+          ;  (Ret)
+           (cr-entry)
+           (cr-resume)
            (compile-λ-definitions (λs e)))])) ; <-- changed!
 
 ;; [Listof Defn] -> Asm
@@ -75,6 +111,7 @@
          [(If e1 e2 e3)   (compile-if e1 e2 e3 c)]
          [(Begin e1 e2)   (compile-begin e1 e2 c)]
          [(LetRec bs e1)  (compile-letrec (map car bs) (map cadr bs) e1 c)]
+         [(Gather ls)     (compile-gather ls c)]
          [(Let x e1 e2)   (compile-let x e1 e2 c)])))
 
 ;; Value -> Asm
@@ -93,19 +130,26 @@
     (Lea rax (symbol->label f))
     (Mov (Offset rbx 0) rax)
 
+    ; Save number of arguments (arity checking)
+    (%% "Begin saving arity")
+    (Mov r8 (length xs))
+    ; (Mov r8 #x01337)
+    (Mov (Offset rbx 8) r8)
+    (%% "end saving arity")
+
     ; Save the environment
     (%% "Begin saving the env")
     (Mov r8 (length ys))
-    (Mov (Offset rbx 8) r8)
+    (Mov (Offset rbx 16) r8) ; Changed 8 to 16
     (Mov r9 rbx)
-    (Add r9 16)
+    (Add r9 24)
     (copy-env-to-heap ys c 0)
     (%% "end saving the env")
 
     ; Return a pointer to the closure
     (Mov rax rbx)
     (Or rax type-proc)
-    (Add rbx (* 8 (+ 2 (length ys))))))
+    (Add rbx (* 8 (+ 3 (length ys))))))  ; Changed 2 to 3
 
 ;; (Listof Variable) CEnv Natural -> Asm
 ;; Pointer to beginning of environment in r9
@@ -146,7 +190,8 @@
                      (unpad-stack c))]
     ['peek-byte (seq (pad-stack c)
                      (Call 'peek_byte)
-                     (unpad-stack c))]))
+                     (unpad-stack c))]
+    ['yield     (cr-yield)]))
 
 ;; Op1 Expr CEnv -> Asm
 (define (compile-prim1 p e c)
@@ -212,7 +257,12 @@
          ['empty? (eq-imm val-empty)]
          ['procedure-arity
           ;; TODO
-          (seq)
+          (seq (assert-proc rax)
+               (Xor rax type-proc)
+               (Mov rax (Offset rax 8))  ; get closure arity
+              ;  (Mov rax 55)
+               (Sal rax int-shift)
+               (Or  rax type-int))
           ]
          )))
 
@@ -248,6 +298,105 @@
                (Mov rax rbx)
                (Or rax type-cons)
                (Add rbx 16))])))
+
+;; int64_t cr_entry(Lambda proc, void *rsp)
+;;                     rdi ^^^     rsi ^^^
+;; Bridge to allow C to start a coroutine
+;; A coroutine is just a lambda with only environment arguments
+;; Assumes the stack is 16 byte aligned when called
+;; 
+(define (cr-entry)
+  (let* ()
+    (seq
+      (%% "Coroutine Entrypoint")
+      (Label 'cr_entry)
+
+
+      ; The thing being called is passed in rdi
+      ; A pointer to our very own stack is in rsi
+  
+      ; Coroutines aren't passed any arguments
+
+      ; Install the stack given to us
+      (Mov rsp 'rsi)
+  
+      ; Get the function being called off the stack
+      ; Ensure it's a proc and remove the tag
+      ; Remember it points to the _closure_
+      (%% "Get function from rdi bc copy-closure-env needs it in rax")
+      (Mov rax rdi)
+      (assert-proc rax)
+      (Xor rax type-proc)
+  
+      (%% "Get closure env")
+      (copy-closure-env-to-stack)
+      (%% "finish closure env")
+
+
+      ; get the size of the env and save it on the stack
+      (Mov rcx (Offset rax 16))  ; Changed 8 to 16
+      (Push rcx)
+
+      ; coroutines MUST NOT take arguments
+      ; Must be right before the call because the stack MUST be aligned
+      ; in case we jump to 'raise-err.
+      (Mov rcx (Offset rax 8))
+      (Cmp rcx 0)
+      (Jne 'raise_error)
+  
+      ; Actually call the function
+      (Mov rax (Offset rax 0))
+      (Call rax)
+  
+      ; Get the size of the env off the stack
+      (Pop rcx)
+      (Sal rcx 3)
+
+      ; pop args
+      ; First the number of arguments + alignment + the closure
+      ; then captured values
+      ; (Add rsp (* 8 (+ 1 cnt)))
+      ; (Add rsp (* 8 1))
+      ; (Add rsp rcx)
+      ; (Add rsp 8)
+
+      (Mov rdi rax)
+      ; (Sub rsp 8)
+      (And rsp -16) ; Hack but it doesn't matter because the coroutine is ending : >
+      (Call 'cr_quit)
+
+      (Ret))))
+      
+
+;; void cr_resume(void *saved_rsp, void *saved_rip)
+;; Resumes a paused coroutine 
+;; (does not return [coroutine will yield again or call cr_quit when finished])
+;; Restores the saved stack ptr passed as an argument then pops all its 
+;; saved registers before resuming.
+(define (cr-resume)
+  (seq 
+    (%% "Coroutine resume")
+    (Label 'cr_resume)
+    (Mov rsp rdi) ;; Reinstall saved stack pointer
+    (restore-regs) ;; Pop saved regs
+    (Jmp 'rsi))) ;; Jump to saved rip (passed as argument)
+  
+;; Pauses a coroutine and passes control to the scheduler
+;; Calls the following C function:
+;; void cr_yield(void *saved_rsp)
+(define (cr-yield)
+  (seq 
+    (%% "Coroutine yield")
+    (save-regs)  ;; Push regs to save them
+    (Mov rdi rsp) ;; Pass rsp as arg to be saved
+    (Call 'cr_yield)))
+
+; (define (cr-yield-discard-regs)
+;   (seq 
+;     (%% "Coroutine yield discarding register values")
+;     ; (save-regs)  ;; Push regs to save them
+;     (Mov rdi rsp) ;; Pass rsp as arg to be saved
+;     (Call 'cr_yield)))
 
 
 
@@ -296,9 +445,17 @@
       (copy-closure-env-to-stack)
       (%% "finish closure env")
 
+
       ; get the size of the env and save it on the stack
-      (Mov rcx (Offset rax 8))
+      (Mov rcx (Offset rax 16))  ; Changed 8 to 16
       (Push rcx)
+
+      ; get arity and check number of variables being passed
+      ; Must be right before the call because the stack MUST be aligned
+      ; in case we jump to 'raise-err.
+      (Mov rcx (Offset rax 8))
+      (Cmp rcx (length es))
+      (Jne 'raise_error)
   
       ; Actually call the function
       (Mov rax (Offset rax 0))
@@ -320,9 +477,9 @@
   (let ((copy-loop (symbol->label (gensym 'copy_closure)))
         (copy-done (symbol->label (gensym 'copy_done))))
     (seq
-      (Mov r8 (Offset rax 8)) ; length
+      (Mov r8 (Offset rax 16)) ; length ; Changed to 16
       (Mov r9 rax)
-      (Add r9 16)             ; start of env
+      (Add r9 24)             ; start of env
       (Label copy-loop)
       (Cmp r8 0)
       (Je copy-done)
@@ -366,6 +523,57 @@
          (compile-e e3 c)
          (Label l2))))
 
+(define (sysv-push-arg arg-num val)
+  (match arg-num
+    [0 (Mov 'rdi val)]
+    [1 (Mov 'rsi val)]
+    [2 (Mov 'rdx val)]
+    [3 (Mov 'rcx val)]
+    [4 (Mov 'r8  val)]
+    [5 (Mov 'r9  val)]
+    [_ (Push val)]
+    ))
+
+;; Compiles lambdas and gets ready to pass them to the C function,
+;; cr_gather, to be turned into coroutines.
+;; The lambdas are passed as variadic args so they can't all be
+;; pushed onto the stack
+(define (compile-gather-ext ls c n)
+  (match ls
+   ['() (seq)]
+   [(cons l ls) 
+      (seq (compile-e l c)
+        (%% (string-append "Passing arg " (number->string n) " to cr_gather."))
+        (sysv-push-arg n rax)
+        (compile-gather-ext ls c (+ 1 n)))]))
+
+
+(define (compile-gather ls c)
+ (let* ((cnt (max 0 (- (length ls) 6))) ;; First 6 args are passed in regs per SysV CConv
+         (aligned (even? (+ cnt (length c))))
+         (i (if aligned 0 1)) ;; QWORDS of padding
+         (c+ (if aligned
+                 c
+                 (cons #f c))))
+  (seq (Label (gensym 'gather))
+       ;; Pad stack in case lambda args overflow onto stack
+       (if aligned
+        (seq)
+        (Sub rsp 8))
+
+       (compile-gather-ext ls c+ 1) ;; n = 1 because our first argument will be number of lambdas
+       (%% "Passing arg 0 (num_lambdas) to cr_gather")
+       (sysv-push-arg 0 (length ls)) ;;  pass first arg: num of lambdas
+       (Call 'cr_gather)
+       (%% "Pop stack args (if any) + padding (if any)")
+       (%% (string-append "cnt was " (number->string cnt)))
+       (%% (string-append "i was " (number->string i)))
+       (%% (string-append "c was " (number->string (length c))))
+       (Add rsp (* 8(+ cnt i)))
+       (cr-yield)
+       (Mov rax val-void))))
+
+
 ;; Expr Expr CEnv -> Asm
 (define (compile-begin e1 e2 c)
   (seq (compile-e e1 c)
@@ -401,12 +609,14 @@
              (seq
                (Lea rax (symbol->label lab))
                (Mov (Offset rbx 0) rax)
-               (Mov rax (length ys))
+               (Mov rax (length as)) ; Get number of arguments for arity check
                (Mov (Offset rbx 8) rax)
+               (Mov rax (length ys)) ; Get number of free variables
+               (Mov (Offset rbx 16) rax)  ; Changed 8 to 16
                (Mov rax rbx)
                (Or rax type-proc)
                (%% (~a "The fvs of " lab " are " ys))
-               (Add rbx (* 8 (+ 2 (length ys))))
+               (Add rbx (* 8 (+ 3 (length ys)))) ; Changed 2 to 3 (for arity)
                (Push rax)
                (compile-letrec-λs ls (cons #f c))))])]))
 
@@ -419,7 +629,7 @@
           (seq
             (Mov r9 (Offset rsp (lookup f c)))
             (Xor r9 type-proc)
-            (Add r9 16) ; move past label and length
+            (Add r9 24) ; move past label and length; Change 16 to 24
             (copy-env-to-heap ys c 0)
             (compile-letrec-init fs (rest ls) c)))]))
 

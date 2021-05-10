@@ -34,6 +34,8 @@
      (If (parse-e e1) (parse-e e2) (parse-e e3))]
     [(list 'let (list (list (? symbol? x) e1)) e2)
      (Let x (parse-e e1) (parse-e e2))]
+    [(list-rest 'gather ls)
+     (Gather (map parse-e ls))]
     [(list 'letrec bs e1)
      (LetRec (parse-bindings bs) (parse-e e1))]
     [(list 'λ (? symbol-list? as) e1)      (Lam '() as (parse-e e1))]
@@ -48,12 +50,13 @@
     [(cons (list (? symbol? x) e1) rest)
            (cons (list x (parse-e e1)) (parse-bindings rest))]))
 
+
 (define (symbol-list? xs)
   (match xs
     [(list (? symbol?) ...) xs]))
 
 (define op0
-  '(read-byte peek-byte void))
+  '(read-byte peek-byte void yield))
 (define op1
   '(add1 sub1 zero? char? write-byte eof-object?
          integer->char char->integer box unbox empty? car cdr

@@ -1,6 +1,6 @@
 #ifndef RUNTIME_H
 #define RUNTIME_H
-int64_t entry();
+int64_t entry(void *heap, void *stack);
 extern FILE* in;
 extern FILE* out;
 extern void (*error_handler)();

@@ -1,6 +1,13 @@
 *.o
 *.s
+*.x
 *.run
 *.out
+*~
 compiled/
 assign*test/
+.devcontainer/devcontainer.json
+.gitignore
+.vscode/settings.json
+.devcontainer/Dockerfile
+**.DS_Store
