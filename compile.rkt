@@ -560,7 +560,7 @@
 
 ;; Compiles lambdas and gets ready to pass them to the C function,
 ;; cr_gather, to be turned into coroutines.
-;; The lambdas are passed as variadic args so they can't all be
+;; The lambdas are passed is variadic args so they can't all be
 ;; pushed onto the stack
 (define (compile-gather-ext ls c n)
   (match ls
@@ -597,7 +597,7 @@
        (%% (string-append "cnt was " (number->string cnt)))
        (%% (string-append "i was " (number->string i)))
        (%% (string-append "c was " (number->string (length c))))
-       (Add rsp (* 8(+ cnt i)))
+       (Add rsp (* 8 (+ cnt i)))
        (cr-yield)
        (Mov rax val-void))))
 
