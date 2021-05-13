@@ -31,13 +31,15 @@ static struct coroutine *current = NULL;
 static void *global_rsp = NULL;
 
 
-// From main.c  Prints result and exits
+// From main.c
+extern void print_result(int64_t result);
 extern int quit(int64_t result);
 
 
 static struct cr_stack cr_alloc_stack();
 static void cr_free_stack(struct coroutine *c);
-
+static void cr_init_schedule_list();
+static void cr_quit_2(int64_t result);
 
 
 /**
@@ -71,6 +73,22 @@ static void print_lambda(int64_t lambda) {
     }
 }
 
+
+/**
+ *  Must be called from main.c:main() to setup coroutines.
+ */
+void cr_init() {
+    PAGE_SIZE = sysconf(_SC_PAGESIZE);
+    if (CR_DEBUG >= 2)
+        printf("PAGE_SIZE=%d\n", PAGE_SIZE);
+    cr_init_schedule_list();
+}
+
+
+/**
+ * Create an initial coroutine which is the ancestor of all other coroutines.
+ * Will eventually run code starting from 'entry in the compiled program
+ */
 static struct coroutine *cr_create_entry_coroutine() {
     struct coroutine *entry_coroutine = cr_create(0L, NULL);
     /* 
@@ -82,17 +100,16 @@ static struct coroutine *cr_create_entry_coroutine() {
 
 }
 
+/**
+ * Initialize the schedule list to just the 'entry coroutine.
+ */
 static void cr_init_schedule_list() {
     current = cr_create_entry_coroutine();
 }
 
-void cr_init() {
-    PAGE_SIZE = sysconf(_SC_PAGESIZE);
-    if (CR_DEBUG >= 2)
-        printf("PAGE_SIZE=%d\n", PAGE_SIZE);
-    cr_init_schedule_list();
-}
-
+/**
+ * Analagous to main.c:main(), but runs 'entry as a coroutine
+ */
 void cr_main(void *heap) {
     asm("movq %%rsp, %0;"
         :"=r"(global_rsp));
@@ -104,6 +121,9 @@ void cr_main(void *heap) {
 }
 
 
+/**
+ * Maps the stack for a coroutine
+ */
 static struct cr_stack cr_alloc_stack() {
     struct cr_stack rval;
     void *stack;
@@ -132,7 +152,8 @@ static struct cr_stack cr_alloc_stack() {
 /**
  * Creates a coroutine, with a stack and entry point
  * 
- * @param entry_fun ptr to function which this coroutine will run
+ * @param lambda the function this coroutine will execute
+ * @param parent the parent that called gather to start this coroutine
  * 
  */
 struct coroutine *cr_create(int64_t lambda, struct coroutine *parent) {
@@ -158,16 +179,9 @@ struct coroutine *cr_create(int64_t lambda, struct coroutine *parent) {
     return c;
 }
 
-// struct coroutine *cr_create_raw(void *entry_point, struct coroutine *parent) {
-//     struct coroutine *c = cr_create(0L, parent);
-//     c.rip
-// }
-
-// struct coroutine *cr_create_from_lambda(int64_t lambda) {
-//     struct coroutine *c = cr_create(CCR);
-// }
-
-
+/**
+ * Free a coroutine's stack
+ */
 static void cr_free_stack(struct coroutine *c) {
     if (CR_DEBUG >= 2)
         printf("Unmapping cr stack:\n\t stack: %p\n\trsp: %p\n\tsize: %lu\n", c->stack.stack, c->stack.rsp, c->stack.size);
@@ -176,12 +190,42 @@ static void cr_free_stack(struct coroutine *c) {
         perror("Unmapping cr stack failed!");
         abort();
     }
+
+    c->stack = (struct cr_stack) {
+        .stack = NULL,
+        .rsp = NULL,
+        .size = 0
+    };
 }
 
+
+/**
+ * Free all a coroutine's resources
+ */
 void cr_free(struct coroutine *c) {
     cr_free_stack(c);  // Probably already freed by cr_quit
     free(c);
 }
+
+
+
+/**
+ * Like exit for coroutines.
+ * Collects the return value of a coroutine and frees its stack.
+ * Coroutine struct PERSISTS (like a zombie process) until parent gets return value
+ * 
+ * @param result return value of the coroutine
+ */
+void cr_quit(int64_t result) {
+    register void *sp asm ("rsp") = global_rsp;
+
+    if (CR_DEBUG >= 2)
+        puts("cr_quit");
+
+    // This uses the new stack pointer
+    cr_quit_2(result);
+}
+
 
 static void cr_quit_2(int64_t result) {
     CCR->result = result;
@@ -201,7 +245,6 @@ static void cr_quit_2(int64_t result) {
         assert(CCR->parent->block_state.blocked == true);
         assert(CCR->parent->block_state.reason == CHILD);
         assert(CCR->parent->block_state.state.child.waiting_on > 0);
-
         --CCR->parent->block_state.state.child.waiting_on;
 
         if (CCR->parent->block_state.state.child.waiting_on == 0) {
@@ -213,6 +256,7 @@ static void cr_quit_2(int64_t result) {
             CCR->parent->block_state.blocked = false;
         }
 
+        // Start running another coroutine
         cr_schedule();
     }
 
@@ -220,32 +264,18 @@ static void cr_quit_2(int64_t result) {
         // Quit the program when original coroutine quits
         // Like init process ending
 
-        puts("THANKS FOR YOUR HELP! :)");
+        // Thank Temur for explaining to me the quirks of DrRacket at 4am on
+        // a Sunday! 
+        puts("THANKS TEMUR! :)");
         quit(result);
     }
 }
 
+
 /**
- * Like exit for coroutines.
- * Collects the return value of a coroutine and frees its stack.
- * Coroutine struct PERSISTS (like a zombie process) until parent gets return value
- * 
- * @param result return value of the coroutine
+ * Saves RSP, and RIP passed to it from assembly
+ * and switches context to another coroutine
  */
-void cr_quit(int64_t result) {
-    register void *sp asm ("rsp") = global_rsp;
-    // asm volatile("movq %0, %%rsp;"
-    //     ::"r"(global_rsp)
-    //     :);
-
-    if (CR_DEBUG >= 2)
-        puts("cr_quit");
-
-    cr_quit_2(result);
-}
-
-
-extern void cr_resume(void *saved_rsp, void *saved_rip);
 void cr_yield(void *saved_rsp) {
 
     CCR->stack.rsp = saved_rsp;
@@ -255,11 +285,20 @@ void cr_yield(void *saved_rsp) {
 }
 
 
+/**
+ * Adds a coroutine to the circular schedule list
+ */
 void cr_make_schedulable(struct coroutine *c) {
     c->next = CCR->next;
     CCR->next = c;
 }
 
+/**
+ * Start or resume the next unblocked coroutine in 
+ * the coroutine list.
+ * 
+ * --- Never Returns ---
+ */
 void cr_schedule(void) {
     // For now just resume the current coroutine
     
@@ -288,10 +327,27 @@ void cr_schedule(void) {
 }
 
 /**
- * Load length prefixed list of lambdas off the stack
+ * Load a length prefixed list of lambdas passed as args
  * and make a coroutine for each.
  * 
- * This function stays on calling CR's stack
+ * The Gather Gavotte:
+ * 
+ * 'cr_gather is assembly
+ * cr_gather is this function
+ * 
+ * Step 1: 'cr_gather calls this function and passes it a bunch of lambdas it wants to
+ *          run as coroutines.
+ * Step 2: cr_gather creates stacks and coroutine structs to wrap all those lambdas, and
+ *         adds them to the scheduling list BUT DOES NOT RUN THEM. cr_gather marks the
+ *         current coroutine blocked and RETURNS control to it so it can yield saving
+ *         its state.
+ * Step the last: The current coroutine yields pushing its registers.  It will not be
+ *          scheduled again until all its children finish and call cr_quit.
+ *  
+ * 
+ * This function stays on calling CR's stack.
+ * It doesn't have to but it's faster than
+ * switching to the global RSP and causing a bunch of cache misses for no reason.
  */
 void cr_gather(int64_t num_lambdas, ...) {
     puts("cr_gather");

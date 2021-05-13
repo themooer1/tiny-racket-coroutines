@@ -1,4 +1,4 @@
-#lang racket ; Expected output: 7
+#lang racket ; Expected output: 4 each from [ABCDEF] interlaced
 (begin 
        (define (a x) 
               (if (zero? x) 
@@ -60,19 +60,31 @@
                             (begin
                                    (yield)
                                    (f (- x 1))))))
+       (define (l)
+              (a 4))
 
+       (define (m)
+              (b 4))
 
+       (define (n)
+              (c 4))
+
+       (define (o)
+              (d 4))
+
+       (define (p)
+              (e 4))
 
 
        (begin
               (gather 
-                     (lambda () (c 4))
-                     (lambda () (c 4))
-                     ; (lambda () (c 4))
-                     ; (lambda () (d 4))
-                     ; (lambda () (e 4))
-                     ; (lambda () (e 4))
-                     ; (lambda () (e 4))
+                     l
+                     m
+                     n
+                     o
+                     p
+                     l
+                     l
                      ; (lambda () (l 4))
                      )
               (+ 1 41)))

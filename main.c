@@ -58,10 +58,6 @@ int quit(int64_t result) {
   return 0;
 }
 
-
-
-// int64_t cr_entry(int64_t lambda, void *stack_ptr);
-
 void print_char(int64_t);
 void print_cons(int64_t);
 
@@ -75,12 +71,6 @@ void print_result(int64_t result) {
     print_result (*((int64_t *)(result ^ box_type_tag)));
   } else if (proc_type_tag == (ptr_type_mask & result)) {
     printf("<procedure @ %lu>", result ^ proc_type_tag);
-    // struct coroutine *cr = cr_create(result, NULL);
-    // puts("CrCr");
-    // int64_t r2 = cr_entry(result, cr->stack.rsp);
-    //      ^^ not necessary cr doesn't return it calls quit
-    // puts("Coroutine should not return!");
-    // print_result(r2);
   } else if (int_type_tag == (int_type_mask & result)) {
     printf("%" PRId64, result >> int_shift);
   } else if (char_type_tag == (char_type_mask & result)) {

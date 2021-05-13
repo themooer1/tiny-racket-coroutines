@@ -1,0 +1,51 @@
+The examples in this directory can all be built as follows:
+
+In examples/.. run:
+    make examples/example-name.run
+
+You will need to install a slightly modified fork of the langs package which can be installed like this:
+    raco pkg install 'https://github.com/themooer1/www.git?path=langs#main'
+
+You have to be running Linux?
+
+To see more or less info, you can set the CR_DEBUG level at the top of coroutine.c
+
+
+Examples:
+
+    simple-gather.rkt:
+        This shows the main coroutine starting two other coroutines which return
+        42 and 43 respectively.  Once those coroutines finish, the main coroutine
+        is unblocked and exits returning void (which is the value of gather).
+
+    no-arguments-please.rkt:
+        This example errors because coroutines are lambdas that take no arguments.
+        When a lambda with an argument is passed to gather, it will be setup and given
+        a stack, but when it is first scheduled, the coroutine entrypoint will
+        see that it takes an argument and throw an error.
+
+    one-coroutine-printing.rkt:
+        A single coroutine which prints A 4 times in a loop and yields to the scheduler
+        between prints.
+
+    two-coroutines-printing.rkt:
+        The first example with actual concurrency!  Once coroutines prints 4 'A's
+        and the other prints 4 'B's.  They yield between prints so the A's and B's alternate.
+
+    multiple-coroutines-printing.rkt:
+        Lots of coroutines printing letters.
+
+    multiple-(defined)-coroutines-printing.rkt:
+        Any lambda with no args can be run as a coroutine.  This example gathers a 
+        bunch of defined functions instead of inline lambdas.
+
+    russian-gather.rkt:
+        Any coroutine can gather other coroutines.
+
+    russian-gather-2.rkt:
+        A coroutine which calls gather is blocked until all the coroutines it 
+        gathers finish (just like a parent process repeatedly calling wait on
+        all its children).  In this example the parent coroutine (which is itself
+        a child of the implicit main coroutine) prints the letter A, but only
+        after the three children it gathers print 4, 5, and 4.
+

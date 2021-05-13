@@ -1,4 +1,4 @@
-#lang racket ; Expected output: 7
+#lang racket ; Expected output: Alternating A's and B's.  4 each.
 (begin 
        (define (g x) 
               (if (zero? x) 

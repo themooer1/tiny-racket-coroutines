@@ -1,0 +1,76 @@
+
+Design:
+    The gather concept was modeled on asyncio in Python, but I added an explicit
+    yield keyword for ceding control to the event loop because it makes demonstrating
+    what an event loop is much clearer than a call to asyncio.sleep(0) does.
+
+Approach:
+    A coroutine struct contains a pointer to a coroutine's stack and a saved RSP.  yield
+    just pushes in-use registers to a coroutine's stack then passes the cr's RSP to the c
+    function cr_yield to be saved.  cr_resume is passed the saved RSP and it installs it 
+    before popping all its saved registers.  coroutine.c manages a circular list of coroutine
+    structs and cr_schedule just goes through the list until it finds an unblocked coroutine.
+    Coroutines which call gather block until all their children finish and call cr_quit
+    which decrements a counter in their parent so that it can run again.
+    
+    Starting a coroutine is done by passing a lambda and a stack to the assembly function, cr_entry,
+    which is a modified version of call.  It installs the stack and then runs the lambda.
+    When it finishes it calls cr_quit instead of simply returning because it's using a different
+    stack from the one which was used to call it.
+
+    When the main coroutine (the only one whoose parent is NULL) calls cr_quit, the 
+    program ends and its result is printed.
+
+Implementation:
+    - Global Labels:
+        To let the C scheduler start and resume coroutines, I needed the compiler to
+        generate multiple global labels.  Unforuntately the langs package doesn't have
+        a 'Global' keyword so I added one.
+    
+    - SysV va_args:
+        cr_gather is a C function which starts a variable number of coroutines.  I wanted
+        to use the builtin va_args macro to access the coroutines cleanly instead of hacking 
+        the stack, so I tried using __attribute__(__cdecl__) to say the args would be pushed
+        on the stack, but apparently x64 has more registers than x86 so they stopped
+        supporting that :/  To solve this, I added sysv-stack-args-to-regs and sysv-push-arg
+        to the compiler to allow it to pass args in rsi, rdi, rdx, etc... and then overflow
+        onto the stack.  Unfortunately this doesn't increase gather's efficiency because it still
+        has to push all the lambdas onto the stack when making them because compiling a lambda 
+        clobbers some sysv arg registers, and because (I think) va_args just puts everything on the 
+        stack anyway.
+    
+    - Coroutine Stacks:
+        I was originally going to use memalign(), realloc() and a SEGV signal handler 
+        to create and dynamically grow coroutine stacks, but because I context switch 
+        by pushing all in-use registers and jumping to cr_yield which reinstalls the main
+        stack before calling cr_schedule to start another coroutine, I couldn't realloc stacks
+        because addresses of variables stored in registers might be made invalid.  Instead 
+        I used mmap which lets me move and resize coroutine stacks in physical memory while 
+        keeping the same virtual addresses.
+
+
+
+Partially supported extensions:
+    Some features were planned and are supported in the C coroutine framework
+    but were not fully implemented because of time.  These include:
+
+        - Other Reasons for Blocking:
+            coroutines.h contains definitions which let a coroutine say it is blocking
+            because it's sleeping or waiting on IO.
+        
+        - Gather Returning Values:
+            When a coroutine quits, its stack is unmapped but its return value is
+            saved until its parent wants to read it.  Right now gather returns 'void
+            and coroutine return values are printed, but a simple C function to construct
+            cons lists would allow gather to return a list of the return values of all the
+            coroutines it waits on.
+
+        - Growing Stacks:
+            cr_alloc_stack() could call mmap with the MAP_GROWSDOWN flag which uses a "guard page"
+            which generates a fault and expands the mapping when it is read or written.
+
+        - Protected Stacks
+            Coroutine stacks are allocated using mmap().  Ensuring coroutines do not
+            accidentally corrupt each others' stacks should be as easy as calling mprotect()
+            in cr_yield and setting PROT_NONE to disallow reads and writes to the yielding
+            CR's stack until it is scheduled again.

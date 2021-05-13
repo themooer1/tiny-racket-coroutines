@@ -1,4 +1,4 @@
-#lang racket ; Expected output: 7
+#lang racket ; Expected output: A\nA\nA\nA\n
 (begin 
        (define (g x) 
               (if (zero? x) 

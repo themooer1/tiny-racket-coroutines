@@ -34,4 +34,4 @@ io.o: io.c runtime.h
 	racket -t compile-file.rkt -m $< > $@
 
 clean:
-	rm *.o *.s *.run
+	rm *.o *.s *.run examples/*.run

@@ -1,4 +1,4 @@
-#lang racket ; Expected output: 7
+#lang racket ; Same as 38.1 but the lambdas are inline
 (begin 
        (define (a x) 
               (if (zero? x) 
